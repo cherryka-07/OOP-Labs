@@ -9,6 +9,7 @@ export class CubicBezier extends Shape {
     p1: Point; // локальные координаты
     p2: Point; // локальные координаты
     p3: Point; // локальные координаты
+    closed: boolean; // ← новое свойство
 
     // Константа для согласованной аппроксимации
     private readonly APPROX_STEPS = 64;
@@ -33,6 +34,9 @@ export class CubicBezier extends Shape {
         if (props.transform?.y === undefined) {
             this.transform.y = cy;
         }
+
+        // Инициализация closed (по умолчанию false)
+        this.closed = props.closed ?? false;
     }
 
     // Вычисляет точку кривой в ЛОКАЛЬНЫХ координатах при параметре t ∈ [0, 1]
@@ -115,14 +119,18 @@ export class CubicBezier extends Shape {
         const pts = this.flattenDevicePoints();
         const stroke = this.hexToRGBA(this.strokeStyle);
         stroke.a = Math.floor(this.strokeOpacity * 255);
-        r.strokePolygon(pts, stroke, this.strokeWidth, false);
+        // 🔧 Передаём this.closed вместо false
+        r.strokePolygon(pts, stroke, this.strokeWidth, this.closed);
     }
 
-    //HitTest: проверка попадания по расстоянию до аппроксимированной ломаной
+    // HitTest: проверка попадания по расстоянию до аппроксимированной ломаной
     hitTest(px: number, py: number): boolean {
         const pts = this.flattenDevicePoints(128); // ↑ повышенная точность для hitTest
+        if (pts.length < 2) return false;
+
         let minDist = Infinity;
 
+        // Проверяем все сегменты кривой
         for (let i = 0; i < pts.length - 1; i++) {
             const a = pts[i];
             const b = pts[i + 1];
@@ -138,6 +146,25 @@ export class CubicBezier extends Shape {
             const projY = a.y + t * dy;
             const dist = Math.hypot(px - projX, py - projY);
             minDist = Math.min(minDist, dist);
+        }
+
+        // Если кривая замкнута, проверяем сегмент от конца к началу
+        if (this.closed && pts.length >= 2) {
+            const a = pts[pts.length - 1]; // последняя точка
+            const b = pts[0]; // первая точка
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const lenSq = dx * dx + dy * dy;
+
+            if (lenSq > 0) {
+                let t = ((px - a.x) * dx + (py - a.y) * dy) / lenSq;
+                t = Math.max(0, Math.min(1, t));
+
+                const projX = a.x + t * dx;
+                const projY = a.y + t * dy;
+                const dist = Math.hypot(px - projX, py - projY);
+                minDist = Math.min(minDist, dist);
+            }
         }
 
         // Запас в 2 пикселя на погрешность аппроксимации + мин. порог 4px для удобства
@@ -159,8 +186,9 @@ export class CubicBezier extends Shape {
             toWorld(this.p2),
             toWorld(this.p3),
             {
-                // 🔧 Явно передаём transform, чтобы конструктор не пересчитывал центр
+                // 🔧 Явно передаём transform и closed
                 transform: { ...this.transform },
+                closed: this.closed,
                 strokeStyle: this.strokeStyle,
                 strokeWidth: this.strokeWidth,
                 strokeOpacity: this.strokeOpacity,
@@ -185,8 +213,9 @@ export class CubicBezier extends Shape {
             p1: toWorld(this.p1),
             p2: toWorld(this.p2),
             p3: toWorld(this.p3),
-            // Transform сохраняем как есть
+            // Transform и closed сохраняем как есть
             transform: { ...this.transform },
+            closed: this.closed, // ← добавлено
             // Стили
             strokeStyle: this.strokeStyle,
             strokeWidth: this.strokeWidth,
