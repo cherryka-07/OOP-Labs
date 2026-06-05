@@ -1,53 +1,51 @@
 import { Shape } from './Shape';
 import { Bounds } from './types';
 import { RasterRenderer } from '../raster/RasterRenderer';
+import { PathBezier } from './PathBezier';
 
 type Point = { x: number; y: number };
 
 export class QuadraticBezier extends Shape {
-    p0: Point; // локальные координаты
-    p1: Point; // локальные координаты
-    p2: Point; // локальные координаты
-    closed: boolean; // ← новое свойство
-
-    // Константа для согласованной аппроксимации
+    private _p0: Point;
+    private _p1: Point;
+    private _p2: Point;
     private readonly APPROX_STEPS = 64;
 
     constructor(p0: Point, p1: Point, p2: Point, props: Partial<QuadraticBezier> = {}) {
         super(props);
-
-        // Вычисляем центр треугольника опорных точек (мировые координаты)
-        const cx = (p0.x + p1.x + p2.x) / 3;
-        const cy = (p0.y + p1.y + p2.y) / 3;
-
-        // Переводим точки в локальные координаты относительно центра
-        this.p0 = { x: p0.x - cx, y: p0.y - cy };
-        this.p1 = { x: p1.x - cx, y: p1.y - cy };
-        this.p2 = { x: p2.x - cx, y: p2.y - cy };
-
-        // Устанавливаем transform, если не передан явно
-        if (props.transform?.x === undefined) {
-            this.transform.x = cx;
+        const steps = 64;
+        let minX = Infinity,
+            maxX = -Infinity,
+            minY = Infinity,
+            maxY = -Infinity;
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const mt = 1 - t;
+            const x = mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x;
+            const y = mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
         }
-        if (props.transform?.y === undefined) {
-            this.transform.y = cy;
-        }
-
-        // Инициализация closed (по умолчанию false)
-        this.closed = props.closed ?? false;
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        this._p0 = { x: p0.x - cx, y: p0.y - cy };
+        this._p1 = { x: p1.x - cx, y: p1.y - cy };
+        this._p2 = { x: p2.x - cx, y: p2.y - cy };
+        if (props.transform?.x === undefined) this.transform.x = cx;
+        if (props.transform?.y === undefined) this.transform.y = cy;
     }
 
-    // Вычисляет точку кривой в ЛОКАЛЬНЫХ координатах при параметре t ∈ [0, 1]
     evalLocal(t: number): Point {
         const mt = 1 - t;
         return {
-            x: mt * mt * this.p0.x + 2 * mt * t * this.p1.x + t * t * this.p2.x,
-            y: mt * mt * this.p0.y + 2 * mt * t * this.p1.y + t * t * this.p2.y,
+            x: mt * mt * this._p0.x + 2 * mt * t * this._p1.x + t * t * this._p2.x,
+            y: mt * mt * this._p0.y + 2 * mt * t * this._p1.y + t * t * this._p2.y,
         };
     }
 
-    // Аппроксимация кривой: возвращает точки в ЭКРАННЫХ (мировых) координатах
-    flattenDevicePoints(steps = this.APPROX_STEPS): Point[] {
+    getWorldPoints(steps = this.APPROX_STEPS): Point[] {
         const pts: Point[] = [];
         for (let i = 0; i <= steps; i++) {
             const t = i / steps;
@@ -59,10 +57,9 @@ export class QuadraticBezier extends Shape {
     }
 
     getLocalDevicePoints(): Point[] {
-        return this.flattenDevicePoints();
+        return this.getWorldPoints();
     }
 
-    // Границы в ЛОКАЛЬНЫХ координатах (по аппроксимации)
     getLocalBounds(): Bounds {
         const pts: Point[] = [];
         for (let i = 0; i <= this.APPROX_STEPS; i++) {
@@ -78,9 +75,9 @@ export class QuadraticBezier extends Shape {
         };
     }
 
-    // Границы в ЭКРАННЫХ координатах
     getBounds(): Bounds {
-        const pts = this.flattenDevicePoints();
+        const pts = this.getWorldPoints();
+        if (pts.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
         const xs = pts.map((p) => p.x);
         const ys = pts.map((p) => p.y);
         return {
@@ -91,119 +88,102 @@ export class QuadraticBezier extends Shape {
         };
     }
 
-    // Возвращает контрольные точки в ЛОКАЛЬНЫХ координатах
     getControlPoints(): Point[] {
-        return [this.p0, this.p1, this.p2];
+        return [this._p0, this._p1, this._p2];
     }
 
-    // Устанавливает контрольную точку в ЛОКАЛЬНЫХ координатах
     setControlPoint(idx: number, pt: Point): void {
-        if (idx === 0) this.p0 = pt;
-        else if (idx === 1) this.p1 = pt;
-        else if (idx === 2) this.p2 = pt;
+        switch (idx) {
+            case 0:
+                this._p0 = { ...pt };
+                break;
+            case 1:
+                this._p1 = { ...pt };
+                break;
+            case 2:
+                this._p2 = { ...pt };
+                break;
+        }
     }
 
-    // Отрисовка: использует экранные точки из аппроксимации
+    addPointLocal(pt: Point, index?: number): void {
+        const worldPoints = this.getWorldPoints();
+        const pathBezier = new PathBezier(worldPoints, {
+            mode: 'bezier',
+            closed: false,
+            strokeStyle: this.strokeStyle,
+            strokeWidth: this.strokeWidth,
+            strokeOpacity: this.strokeOpacity,
+            fillStyle: this.fillStyle,
+            fillOpacity: this.fillOpacity,
+            transform: { ...this.transform },
+        });
+        pathBezier.addPointLocal({ x: pt.x, y: pt.y }, index);
+        (this as any).__convertToPath = pathBezier;
+        alert('Кривая преобразована в PathBezier для добавления точек');
+    }
+
+    removePoint(index: number): void {
+        alert('Квадратичная кривая Безье имеет 3 фиксированные точки');
+    }
+
     drawRaster(r: RasterRenderer): void {
-        const pts = this.flattenDevicePoints();
+        const pts = this.getWorldPoints();
+        if (pts.length < 2) return;
         const stroke = this.hexToRGBA(this.strokeStyle);
         stroke.a = Math.floor(this.strokeOpacity * 255);
-        // 🔧 Передаём this.closed вместо false
-        r.strokePolygon(pts, stroke, this.strokeWidth, this.closed);
+        r.strokePolygon(pts, stroke, this.strokeWidth, false);
     }
 
-    // HitTest: проверка попадания по расстоянию до аппроксимированной ломаной
     hitTest(px: number, py: number): boolean {
-        const pts = this.flattenDevicePoints(128); // ↑ повышенная точность для hitTest
-        if (pts.length < 2) return false;
-
+        const pts = this.getWorldPoints(128);
         let minDist = Infinity;
-
-        // Проверяем все сегменты кривой
         for (let i = 0; i < pts.length - 1; i++) {
-            const a = pts[i];
-            const b = pts[i + 1];
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
+            const a = pts[i],
+                b = pts[i + 1];
+            const dx = b.x - a.x,
+                dy = b.y - a.y;
             const lenSq = dx * dx + dy * dy;
             if (lenSq === 0) continue;
-
             let t = ((px - a.x) * dx + (py - a.y) * dy) / lenSq;
             t = Math.max(0, Math.min(1, t));
-
-            const projX = a.x + t * dx;
-            const projY = a.y + t * dy;
+            const projX = a.x + t * dx,
+                projY = a.y + t * dy;
             const dist = Math.hypot(px - projX, py - projY);
             minDist = Math.min(minDist, dist);
         }
-
-        //Если кривая замкнута, проверяем сегмент от конца к началу
-        if (this.closed && pts.length >= 2) {
-            const a = pts[pts.length - 1]; // последняя точка
-            const b = pts[0]; // первая точка
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
-            const lenSq = dx * dx + dy * dy;
-
-            if (lenSq > 0) {
-                let t = ((px - a.x) * dx + (py - a.y) * dy) / lenSq;
-                t = Math.max(0, Math.min(1, t));
-
-                const projX = a.x + t * dx;
-                const projY = a.y + t * dy;
-                const dist = Math.hypot(px - projX, py - projY);
-                minDist = Math.min(minDist, dist);
-            }
-        }
-
-        // Запас в 2 пикселя на погрешность аппроксимации + мин. порог 4px для удобства
         const tolerance = Math.max(4, (this.strokeWidth || 1) + 2);
         return minDist <= tolerance;
     }
 
-    // clone(): создаёт независимую копию с сохранением МИРОВЫХ координат
     clone(): Shape {
-        // Вспомогательная функция: локальные → мировые координаты
-        const toWorld = (p: Point): Point => ({
-            x: p.x + this.transform.x,
-            y: p.y + this.transform.y,
+        const worldPoints = [
+            { x: this._p0.x + this.transform.x, y: this._p0.y + this.transform.y },
+            { x: this._p1.x + this.transform.x, y: this._p1.y + this.transform.y },
+            { x: this._p2.x + this.transform.x, y: this._p2.y + this.transform.y },
+        ];
+        return new QuadraticBezier(worldPoints[0], worldPoints[1], worldPoints[2], {
+            transform: { ...this.transform },
+            strokeStyle: this.strokeStyle,
+            strokeWidth: this.strokeWidth,
+            strokeOpacity: this.strokeOpacity,
+            fillStyle: this.fillStyle,
+            fillOpacity: this.fillOpacity,
         });
-
-        return new QuadraticBezier(
-            toWorld(this.p0), // передаём мировые координаты
-            toWorld(this.p1),
-            toWorld(this.p2),
-            {
-                // 🔧 Явно передаём transform и closed
-                transform: { ...this.transform },
-                closed: this.closed,
-                strokeStyle: this.strokeStyle,
-                strokeWidth: this.strokeWidth,
-                strokeOpacity: this.strokeOpacity,
-                fillStyle: this.fillStyle,
-                fillOpacity: this.fillOpacity,
-            },
-        );
     }
 
-    // toJSON(): сериализация с МИРОВЫМИ координатами для корректной десериализации
     toJSON() {
-        // Вспомогательная функция: локальные → мировые
-        const toWorld = (p: Point): Point => ({
-            x: p.x + this.transform.x,
-            y: p.y + this.transform.y,
-        });
-
+        const worldPoints = [
+            { x: this._p0.x + this.transform.x, y: this._p0.y + this.transform.y },
+            { x: this._p1.x + this.transform.x, y: this._p1.y + this.transform.y },
+            { x: this._p2.x + this.transform.x, y: this._p2.y + this.transform.y },
+        ];
         return {
             type: 'QuadraticBezier',
-            // Сохраняем МИРОВЫЕ координаты контрольных точек
-            p0: toWorld(this.p0),
-            p1: toWorld(this.p1),
-            p2: toWorld(this.p2),
-            // Transform и closed сохраняем как есть
+            p0: worldPoints[0],
+            p1: worldPoints[1],
+            p2: worldPoints[2],
             transform: { ...this.transform },
-            closed: this.closed,
-            // Стили
             strokeStyle: this.strokeStyle,
             strokeWidth: this.strokeWidth,
             strokeOpacity: this.strokeOpacity,
@@ -212,22 +192,15 @@ export class QuadraticBezier extends Shape {
         };
     }
 
-    // Вспомогательный метод: получить мировые координаты контрольной точки
     getControlPointWorld(idx: number): Point | null {
-        const local = this.getControlPoints()[idx];
-        if (!local) return null;
-        return {
-            x: local.x + this.transform.x,
-            y: local.y + this.transform.y,
-        };
+        const pts = this.getControlPoints();
+        if (idx < 0 || idx >= pts.length) return null;
+        const [x, y] = this.transformPointToDevice(pts[idx].x, pts[idx].y);
+        return { x, y };
     }
 
-    // Вспомогательный метод: установить контрольную точку в МИРОВЫХ координатах
     setControlPointWorld(idx: number, worldPt: Point): void {
-        const localPt = {
-            x: worldPt.x - this.transform.x,
-            y: worldPt.y - this.transform.y,
-        };
-        this.setControlPoint(idx, localPt);
+        const local = this.transformPointToLocal(worldPt.x, worldPt.y);
+        if (local) this.setControlPoint(idx, { x: local[0], y: local[1] });
     }
 }

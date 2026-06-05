@@ -133,4 +133,13 @@ export abstract class Shape {
             a: 255,
         };
     }
+
+    // Базовые методы для контрольных точек (по умолчанию не поддерживаются)
+    getControlPoints(): { x: number; y: number }[] | null {
+        return null;
+    }
+
+    setControlPoint(_idx: number, _pt: { x: number; y: number }): void {
+        // пустая реализация
+    }
 }

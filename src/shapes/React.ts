@@ -1,3 +1,4 @@
+// src/shapes/React.ts
 import { Shape } from './Shape';
 import { Bounds } from './types';
 import { RasterRenderer } from '../raster/RasterRenderer';
@@ -12,7 +13,6 @@ export class Rect extends Shape {
         this.height = h;
     }
 
-    // Локальные границы (относительно центра)
     getLocalBounds(): Bounds {
         return {
             minX: -this.width / 2,
@@ -22,7 +22,6 @@ export class Rect extends Shape {
         };
     }
 
-    //  Возвращает 4 угла в ЭКРАННЫХ координатах
     getLocalDevicePoints(): { x: number; y: number }[] {
         const hw = this.width / 2;
         const hh = this.height / 2;
